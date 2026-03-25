@@ -53,6 +53,7 @@ bool Game::init()
     characterMesh->load("assets/Amy/Ch46_nonPBR.fbx");
     characterMesh->load("assets/Amy/idle.fbx", true);
     characterMesh->load("assets/Amy/walking.fbx", true);
+    characterMesh->load("assets/Amy/waving.fbx", true);
     // Remove root motion
     characterMesh->removeTranslationKeys("mixamorig:Hips");
 #endif
@@ -170,7 +171,14 @@ void Game::render(
 
     // Character, instance 3
     // characterMesh->animate(2, time * characterAnimSpeed);
+#if 0
+    eeng::AnimationBranchDesc upperBodyFilter;
+    upperBodyFilter.root_node_name = "mixamorig:Spine";
+    upperBodyFilter.mode = eeng::AnimationBranchDesc::Mode::ExcludeSubtree;
+    characterMesh->animateBlend(3, 2, time, time, upperBodyFilter);
+#else
     characterMesh->animateBlend(1, 2, time, time, characterAnimBlend);
+#endif
     forwardRenderer->renderMesh(characterMesh, characterWorldMatrix3);
     character_aabb3 = characterMesh->m_model_aabb.post_transform(characterWorldMatrix3);
 

@@ -92,6 +92,18 @@ namespace eeng
         NormalizedTime
     };
 
+    struct AnimationBranchDesc
+    {
+        enum class Mode
+        {
+            IncludeSubtree, //!< Subtree uses clip 1, remainder uses clip 0
+            ExcludeSubtree  //!< Subtree uses clip 0, remainder uses clip 1
+        };
+
+        std::string root_node_name;
+        Mode mode = Mode::IncludeSubtree;
+    };
+
     /// @brief A model loaded from file prepared with GL textures and buffers
     class RenderableMesh
     {
@@ -247,6 +259,23 @@ namespace eeng
             AnmationTimeFormat animTimeFormat0 = AnmationTimeFormat::RealTime,
             AnmationTimeFormat animTimeFormat1 = AnmationTimeFormat::RealTime);
 
+        /// @brief Animate this mesh using two clips filtered by a branch descriptor
+        /// @param anim_index0 Clip index 0. Must be a valid clip.
+        /// @param anim_index1 Clip index 1. Must be a valid clip.
+        /// @param time0 Animation time for clip 0, in seconds or normalized time (see animTimeFormat).
+        /// @param time1 Animation time for clip 1, in seconds or normalized time (see animTimeFormat).
+        /// @param branch Branch selection descriptor resolved to per-node blend weights.
+        /// @param animTimeFormat0 Interpretation of time for clip 0 when mapping to keyframes.
+        /// @param animTimeFormat1 Interpretation of time for clip 1 when mapping to keyframes.
+        void animateBlend(
+            int anim_index0,
+            int anim_index1,
+            float time0,
+            float time1,
+            const AnimationBranchDesc& branch,
+            AnmationTimeFormat animTimeFormat0 = AnmationTimeFormat::RealTime,
+            AnmationTimeFormat animTimeFormat1 = AnmationTimeFormat::RealTime);
+
         /// @brief
         /// @return
         unsigned getNbrAnimations() const;
@@ -301,6 +330,30 @@ namespace eeng
             float ntime0,
             float ntime1,
             float frac) const;
+
+        glm::mat4 animateWeightedBlendNode(
+            size_t node_index,
+            const AnimationClip* anim0,
+            const AnimationClip* anim1,
+            float ntime0,
+            float ntime1,
+            float frac) const;
+
+        float normalizeAnimationTime(
+            const AnimationClip* anim,
+            float time,
+            AnmationTimeFormat animTimeFormat) const;
+
+        std::vector<float> buildNodeBlendWeights(const AnimationBranchDesc& branch) const;
+
+        void animateBlendWeighted(
+            int anim_index0,
+            int anim_index1,
+            float time0,
+            float time1,
+            const std::vector<float>& node_weights,
+            AnmationTimeFormat animTimeFormat0,
+            AnmationTimeFormat animTimeFormat1);
 
         AABB measureScene(const aiScene* aiscene);
 

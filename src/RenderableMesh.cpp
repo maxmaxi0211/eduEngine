@@ -1035,6 +1035,132 @@ namespace eeng
         return M;
     }
 
+    glm::mat4 RenderableMesh::animateWeightedBlendNode(
+        size_t node_index,
+        const AnimationClip* anim0,
+        const AnimationClip* anim1,
+        float ntime0,
+        float ntime1,
+        float frac) const
+    {
+        if (frac <= 0.0f)
+            return animateNode(node_index, anim0, ntime0);
+        if (frac >= 1.0f)
+            return animateNode(node_index, anim1, ntime1);
+        return animateBlendNode(node_index, anim0, anim1, ntime0, ntime1, frac);
+    }
+
+    float RenderableMesh::normalizeAnimationTime(
+        const AnimationClip* anim,
+        float time,
+        AnmationTimeFormat animTimeFormat) const
+    {
+        if (!anim || animTimeFormat == AnmationTimeFormat::NormalizedTime)
+            return time;
+
+        const float dur_ticks = anim->duration_ticks;
+        const float animdur_sec = dur_ticks / anim->tps;
+        const float animtime_sec = fmod(time, animdur_sec);
+        const float animtime_ticks = animtime_sec * anim->tps;
+        return animtime_ticks / dur_ticks;
+    }
+
+    std::vector<float> RenderableMesh::buildNodeBlendWeights(const AnimationBranchDesc& branch) const
+    {
+        EENG_ASSERT(m_nodetree.size(), "Cannot build branch weights on an empty node tree");
+
+        const auto root_it = m_nodehash.find(branch.root_node_name);
+        EENG_ASSERT(root_it != m_nodehash.end(), "'{0}' is not a valid node name", branch.root_node_name);
+
+        const float default_weight =
+            branch.mode == AnimationBranchDesc::Mode::IncludeSubtree ? 0.0f : 1.0f;
+        const float subtree_weight =
+            branch.mode == AnimationBranchDesc::Mode::IncludeSubtree ? 1.0f : 0.0f;
+
+        std::vector<float> weights(m_nodetree.size(), default_weight);
+        m_nodetree.traverse_depthfirst(root_it->second,
+            [&](const SkeletonNode& node, size_t node_index, size_t level)
+            {
+                weights[node_index] = subtree_weight;
+            });
+        return weights;
+    }
+
+    void RenderableMesh::animateBlendWeighted(
+        int anim_index0,
+        int anim_index1,
+        float time0,
+        float time1,
+        const std::vector<float>& node_weights,
+        AnmationTimeFormat animTimeFormat0,
+        AnmationTimeFormat animTimeFormat1)
+    {
+        EENG_ASSERT(anim_index0 >= 0 && anim_index0 < getNbrAnimations(), "{0} is not a valid clip index", anim_index0);
+        EENG_ASSERT(anim_index1 >= 0 && anim_index1 < getNbrAnimations(), "{0} is not a valid clip index", anim_index1);
+        EENG_ASSERT(node_weights.size() == m_nodetree.size(),
+            "Blend weight vector must match node tree size ({0}, got {1})",
+            m_nodetree.size(), node_weights.size());
+
+        AnimationClip* anim0 = &m_animations[anim_index0];
+        AnimationClip* anim1 = &m_animations[anim_index1];
+
+        const float ntime0 = normalizeAnimationTime(anim0, time0, animTimeFormat0);
+        const float ntime1 = normalizeAnimationTime(anim1, time1, animTimeFormat1);
+
+        // Traverse the node tree and animate all nodes
+        m_nodetree.traverse_progressive(
+            [&](SkeletonNode* node, SkeletonNode* parent_node, size_t node_index, size_t parent_index)
+            {
+                node->global_tfm = animateWeightedBlendNode(
+                    node_index,
+                    anim0,
+                    anim1,
+                    ntime0,
+                    ntime1,
+                    node_weights[node_index]);
+
+                if (parent_node)
+                    node->global_tfm = parent_node->global_tfm * node->global_tfm;
+            });
+
+        m_model_aabb.reset();
+        for (int i = 0; i < m_bones.size(); i++)
+        {
+            const auto& node_tfm = m_nodetree.get_payload_at(m_bones[i].node_index).global_tfm;
+            const auto& boneIB_tfm = m_bones[i].inversebind_tfm;
+            glm::mat4 M = node_tfm * boneIB_tfm;
+
+            // Bone matrices
+            boneMatrices[i] = M;
+
+            // AABBs
+            if (m_bone_aabbs_bind[i])
+            {
+                m_bone_aabbs_pose[i] = m_bone_aabbs_bind[i].post_transform(glm::vec3(M[3]), glm::mat3(M));
+                m_model_aabb.grow(m_bone_aabbs_pose[i]);
+            }
+        }
+
+        // Puts mesh AABB's in pose and have them grow model AABB
+        for (int i = 0; i < m_meshes.size(); i++)
+        {
+            if (!m_mesh_aabbs_bind[i])
+                continue;
+            if (m_meshes[i].is_skinned)
+                continue;
+
+            if (m_meshes[i].node_index > EENG_NULL_INDEX)
+            {
+                glm::mat4 M = m_nodetree.get_payload_at(m_meshes[i].node_index).global_tfm;
+                m_mesh_aabbs_pose[i] = m_mesh_aabbs_bind[i].post_transform(glm::vec3(M[3]), glm::mat3(M));
+            }
+            else
+                m_mesh_aabbs_pose[i] = m_mesh_aabbs_bind[i];
+
+            m_model_aabb.grow(m_mesh_aabbs_pose[i]);
+        }
+    }
+
     void RenderableMesh::animate(
         int anim_index,
         float time,
@@ -1114,78 +1240,34 @@ namespace eeng
         AnmationTimeFormat animTimeFormat0,
         AnmationTimeFormat animTimeFormat1)
     {
-        EENG_ASSERT(anim_index0 >= 0 && anim_index0 < getNbrAnimations(), "{0} is not a valid clip index", anim_index0);
-        EENG_ASSERT(anim_index1 >= 0 && anim_index1 < getNbrAnimations(), "{0} is not a valid clip index", anim_index1);
+        std::vector<float> node_weights(m_nodetree.size(), frac);
+        animateBlendWeighted(
+            anim_index0,
+            anim_index1,
+            time0,
+            time1,
+            node_weights,
+            animTimeFormat0,
+            animTimeFormat1);
+    }
 
-        AnimationClip* anim0 = &m_animations[anim_index0];
-        AnimationClip* anim1 = &m_animations[anim_index1];
-
-        // Convert to normalized time
-        float ntime0 = time0;
-        float ntime1 = time1;
-        if (anim0 && animTimeFormat0 == AnmationTimeFormat::RealTime)
-        {
-            const float dur_ticks = anim0->duration_ticks;
-            const float animdur_sec = dur_ticks / anim0->tps;
-            const float animtime_sec = fmod(time0, animdur_sec);
-            const float animtime_ticks = animtime_sec * anim0->tps;
-            ntime0 = animtime_ticks / dur_ticks;
-        }
-        if (anim1 && animTimeFormat1 == AnmationTimeFormat::RealTime)
-        {
-            const float dur_ticks = anim1->duration_ticks;
-            const float animdur_sec = dur_ticks / anim1->tps;
-            const float animtime_sec = fmod(time1, animdur_sec);
-            const float animtime_ticks = animtime_sec * anim1->tps;
-            ntime1 = animtime_ticks / dur_ticks;
-        }
-
-        // Traverse the node tree and animate all nodes
-        m_nodetree.traverse_progressive(
-            [&](SkeletonNode* node, SkeletonNode* parent_node, size_t node_index, size_t parent_index)
-            {
-                node->global_tfm = animateBlendNode(node_index, anim0, anim1, ntime0, ntime1, frac);
-
-                if (parent_node)
-                    node->global_tfm = parent_node->global_tfm * node->global_tfm;
-            });
-
-        m_model_aabb.reset();
-        for (int i = 0; i < m_bones.size(); i++)
-        {
-            const auto& node_tfm = m_nodetree.get_payload_at(m_bones[i].node_index).global_tfm;
-            const auto& boneIB_tfm = m_bones[i].inversebind_tfm;
-            glm::mat4 M = node_tfm * boneIB_tfm;
-
-            // Bone matrices
-            boneMatrices[i] = M;
-
-            // AABBs
-            if (m_bone_aabbs_bind[i])
-            {
-                m_bone_aabbs_pose[i] = m_bone_aabbs_bind[i].post_transform(glm::vec3(M[3]), glm::mat3(M));
-                m_model_aabb.grow(m_bone_aabbs_pose[i]);
-            }
-        }
-
-        // Puts mesh AABB's in pose and have them grow model AABB
-        for (int i = 0; i < m_meshes.size(); i++)
-        {
-            if (!m_mesh_aabbs_bind[i])
-                continue;
-            if (m_meshes[i].is_skinned)
-                continue;
-
-            if (m_meshes[i].node_index > EENG_NULL_INDEX)
-            {
-                glm::mat4 M = m_nodetree.get_payload_at(m_meshes[i].node_index).global_tfm;
-                m_mesh_aabbs_pose[i] = m_mesh_aabbs_bind[i].post_transform(glm::vec3(M[3]), glm::mat3(M));
-            }
-            else
-                m_mesh_aabbs_pose[i] = m_mesh_aabbs_bind[i];
-
-            m_model_aabb.grow(m_mesh_aabbs_pose[i]);
-        }
+    void RenderableMesh::animateBlend(
+        int anim_index0,
+        int anim_index1,
+        float time0,
+        float time1,
+        const AnimationBranchDesc& branch,
+        AnmationTimeFormat animTimeFormat0,
+        AnmationTimeFormat animTimeFormat1)
+    {
+        animateBlendWeighted(
+            anim_index0,
+            anim_index1,
+            time0,
+            time1,
+            buildNodeBlendWeights(branch),
+            animTimeFormat0,
+            animTimeFormat1);
     }
 
     unsigned RenderableMesh::getNbrAnimations() const
