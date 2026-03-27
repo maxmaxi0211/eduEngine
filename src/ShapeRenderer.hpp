@@ -4,6 +4,7 @@
 #ifndef ShapeRenderer_h
 #define ShapeRenderer_h
 
+#include <memory>
 #include <vector>
 #include <unordered_map>
 #include <stack>

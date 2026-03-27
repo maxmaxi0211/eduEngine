@@ -18,7 +18,9 @@
 //#include "config.h"
 
 #ifdef EENG_PLATFORM_WINDOWS
+#ifndef APIENTRY
 #define APIENTRY __stdcall
+#endif
 #define CONSTNESS const
 #else
 #define APIENTRY

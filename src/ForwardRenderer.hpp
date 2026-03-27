@@ -4,6 +4,7 @@
 #ifndef ForwardRenderer_hpp
 #define ForwardRenderer_hpp
 
+#include <memory>
 #include <glm/glm.hpp>
 #include "glcommon.h"
 #include "RenderableMesh.hpp"

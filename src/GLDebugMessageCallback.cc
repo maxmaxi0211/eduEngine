@@ -43,6 +43,7 @@
 // original gist: https://gist.github.com/liam-middlebrook/c52b069e4be2d87a6d2f
 
 #include "GLDebugMessageCallback.h"
+#include <cstring>
 
 // Callback function for printing debug statements
 void APIENTRY GLDebugMessageCallback(GLenum source,

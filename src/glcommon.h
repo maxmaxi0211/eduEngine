@@ -5,13 +5,18 @@
 #define GLCOMMON_H
 
 #include <iostream>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <GL/glew.h>
+
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
-#else
-#define NOMINMAX
-#include <windows.h>
-#include <GL/gl.h>
 #endif
 
 static inline const char *GetGLErrorString(GLenum error)
